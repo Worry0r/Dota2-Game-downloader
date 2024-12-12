@@ -165,3 +165,5 @@ src/metadata/
 src/replays/
 src/matches.db
 matches.db
+metadata
+replays
