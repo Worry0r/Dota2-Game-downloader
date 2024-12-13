@@ -1,20 +1,19 @@
 import requests
 import sqlite3
 import os
-import bz2
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-#Download and decompress replay files, then update database.
-def download_and_decompress_replay(replay_url, replay_path, match_id, db_path):
+#Download compressed replay files, then update database.
+def download_compressed_replay(replay_url, replay_path, match_id, db_path):
     try:
         # Download and save file
         response = requests.get(replay_url, stream=True, timeout=10)
         response.raise_for_status()
 
-        with bz2.BZ2File(response.raw) as compressed_file:
-            with open(replay_path, "wb") as rf:
-                rf.write(compressed_file.read())
+        with open(replay_path, "wb") as replay_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                replay_file.write(chunk)
         print(f"Saved replay to {replay_path}")
 
         # Update database that file was downloaded
@@ -30,7 +29,6 @@ def download_and_decompress_replay(replay_url, replay_path, match_id, db_path):
 
 # Download replay files for matches with metadata downloaded and update database.
 def download_replays(db_path, match_details_dir="metadata", replay_dir="replays", max_workers=5):
-    
     os.makedirs(replay_dir, exist_ok=True)
 
     conn = sqlite3.connect(db_path)
@@ -56,15 +54,20 @@ def download_replays(db_path, match_details_dir="metadata", replay_dir="replays"
                 with open(match_details_path, "r") as f:
                     match_details = json.load(f)
                 
-                # Get replay_url from metadata
-                if "replay_url" in match_details and match_details["replay_url"]:
-                    replay_url = match_details["replay_url"]
-                    replay_filename = f"{match_id}.dem"
-                    replay_path = os.path.join(replay_dir, replay_filename)
+                # Extract replay_url and patch information
+                patch = match_details.get("patch")
+                replay_url = match_details.get("replay_url")
+
+                if patch and replay_url:
+                    # Create directory for the patch if it doesn't exist
+                    patch_dir = os.path.join(replay_dir, f"replays_patch{patch}")
+                    os.makedirs(patch_dir, exist_ok=True)
+                    replay_filename = f"{match_id}.dem.bz2"
+                    replay_path = os.path.join(patch_dir, replay_filename)
 
                     # Download file if not downloaded yet
                     if not os.path.exists(replay_path):
-                        executor.submit(download_and_decompress_replay, replay_url, replay_path, match_id, db_path)
+                        executor.submit(download_compressed_replay, replay_url, replay_path, match_id, db_path)
                 else:
                     print(f"No replay URL found for match {match_id}. Skipping.")
             else:
@@ -75,7 +78,8 @@ def download_replays(db_path, match_details_dir="metadata", replay_dir="replays"
 def main():
     db_path = os.path.join(os.path.dirname(__file__), "matches.db")
     replay_dir = os.path.join(os.path.dirname(__file__), "replays")
-    download_replays(db_path, replay_dir=replay_dir)
+    metadata_dir = os.path.join(os.path.dirname(__file__), "metadata")
+    download_replays(db_path, match_details_dir=metadata_dir, replay_dir=replay_dir)
 
 if __name__ == "__main__":
     main()
